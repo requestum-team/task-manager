@@ -1,0 +1,2 @@
+class SessionClosedException(Exception):
+    pass
