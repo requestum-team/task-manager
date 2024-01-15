@@ -17,6 +17,7 @@ class TaskManager:
 
     def close_session(self, session: Session):
         self.sessions.remove(session)
+        session.is_closed = True
 
     async def create_task(self, queue, payload):
         return await self.storage.create_task(queue, payload)
@@ -46,11 +47,18 @@ class Session:
     def __init__(self, engine: TaskManager):
         self._engine = engine
         self._task_waiter: TaskWaiter | None = None
+        self.is_closed = False
+
+    def _check_closed(self):
+        if self.is_closed:
+            raise SessionClosedException()
 
     async def publish_task(self, topic, payload):
+        self._check_closed()
         return await self._engine.create_task(topic, payload)
 
     async def consume_task(self, topics: list[str]) -> ConsumedTask:
+        self._check_closed()
         if task := await self._engine.take_pending_task(topics):
             return task
 
