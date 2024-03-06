@@ -93,34 +93,56 @@ class AsyncPGStorage(StorageInterface):
         # self.lock.release()
         return None
 
-    # todo postgres impl
     async def take_first_pending(self, topics: list[str]) -> TransactionalResult[ConsumedTask] | None:
         # FIXME pg impl conflicts
         # await self.lock.acquire()
+        """
+        idn UUID PRIMARY KEY,
+        topic VARCHAR (50) NOT NULL,
+        payload JSON NOT NULL,
+        status int NOT NULL,
+        error VARCHAR (255) NULL,
+        description VARCHAR (255) NULL
+        """
 
-        for task in self.tasks:
-            if task.topic in topics and task.status == NEW:
-                task.status = IN_PROGRESS
-                return ConsumedTaskResult(
-                    task,
-                    self.lock
-                )
+        q = (
+            "UPDATE tasks "
+            f"SET status = {IN_PROGRESS} "
+            f"WHERE ("
+            f"status = {NEW} and "
+            f"topic in ({str([f'{i}' for i in topics])[1:-1]})) "
+            f"RETURNING * ;"
+        )
+
+        res: list | asyncpg.Record = await self.conn.fetch(q)
+
+        if res:
+            res: asyncpg.Record = res[0]
+            task = Task.from_dict(dict(res))
+            return ConsumedTaskResult(
+                task,
+                self.lock
+            )
 
         # FIXME pg impl conflicts
         # self.lock.release()
         return None
 
-    # todo postgres impl
     async def finish_task(self, idn: str, error: None | str = None, message: str = ''):
-        for task in self.tasks:
-            if task.idn == idn:
-                task.status = FINISHED
-                task.error = error
-                task.message = message
-                return
 
-        # todo: add exceptions inheritance level to interface and raise appropriate one
-        raise Exception(f"Can't finish task. Task '{idn}' not found in storage")
+        q = (
+            "UPDATE tasks "
+            f"SET status = {FINISHED}, "
+            f"error = {error}, "
+            f"description = {message} "
+            f"WHERE idn = '{idn}'"
+            f"RETURNING *;"
+        )
+        res: list | asyncpg.Record = await self.conn.fetch(q)
+
+        if not res:
+            # todo: add exceptions inheritance level to interface and raise appropriate one
+            raise Exception(f"Can't finish task. Task '{idn}' not found in storage")
 
     def add_on_task_callback(self, callback: OnTaskCallback):
         # todo postgres impl
