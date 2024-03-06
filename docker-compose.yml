@@ -17,7 +17,7 @@ services:
     links:
       - postgres
     entrypoint: sh entrypoint.sh
-    command: pipenv run python3 synthetic_test.py
+    command: pipenv run python3 junk/synthetic_test.py asyncpg_storage
 
   postgres:
     image: postgres:15-alpine

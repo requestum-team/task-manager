@@ -1,21 +1,6 @@
-import asyncio
-import json
-from dataclasses import dataclass
 from typing import Callable, Awaitable, Any, TypeVar, Generic
 
-from task_manager.core.utils import UUIDEncoder
-
-NEW = 0
-IN_PROGRESS = 1
-FINISHED = 2
-
-
-@dataclass
-class ConsumedTask:
-    idn: str
-    topic: str
-    payload: dict
-
+from task_manager.core.tasks import ConsumedTask
 
 OnTaskCallback = Callable[[str], Awaitable[Any]]
 T = TypeVar('T')
@@ -49,35 +34,13 @@ class StorageInterface:
         raise NotImplemented()
 
 
-@dataclass
-class Task:
-    idn: str
-    topic: str
-    payload: dict
-    status: int
-    error: None | str
-    description: str = ''
+class StorageType:
+    IN_MEMORY_STORAGE = 'in_memory_storage'
+    ASYNCPG_STORAGE = 'asyncpg_storage'
 
     @staticmethod
-    def from_dict(data: dict):
-        if isinstance(data.get('payload'), str):
-            data['payload'] = json.loads(data['payload'])
-        return Task(**json.loads(json.dumps(data, cls=UUIDEncoder)))
-
-
-class ConsumedTaskResult(TransactionalResult[ConsumedTask]):
-    def __init__(self, task: Task, lock: asyncio.Lock):
-        self.task = task
-        self.lock = lock
-
-    async def get_data(self) -> ConsumedTask:
-        return ConsumedTask(self.task.idn, self.task.topic, self.task.payload)
-
-    async def commit(self):
-        self.lock.release()
-        ...
-
-    async def rollback(self):
-        self.task.status = NEW
-        self.lock.release()
-        ...
+    def choices():
+        return [
+            StorageType.IN_MEMORY_STORAGE,
+            StorageType.ASYNCPG_STORAGE
+        ]

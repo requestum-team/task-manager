@@ -26,7 +26,6 @@ def make_consumer(name, max_messages):
 
 
 async def main():
-    await storage.create_connection()
 
     asyncio.create_task(make_consumer("1 message", 1))
     asyncio.create_task(make_consumer("permanent", 100))

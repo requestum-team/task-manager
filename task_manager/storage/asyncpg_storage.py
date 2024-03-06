@@ -2,14 +2,50 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import asyncpg
 from asyncpg import Connection, Pool
+from asyncpg.prepared_stmt import PreparedStatement
 from asyncpg.transaction import Transaction
 
-from task_manager.core.storage import StorageInterface, OnTaskCallback, TransactionalResult, ConsumedTask, NEW, \
-    IN_PROGRESS, ConsumedTaskResult, FINISHED, Task
+from task_manager.core.tasks import ConsumedTask, TaskStatus
+from task_manager.core.storage import (
+    StorageInterface, OnTaskCallback, TransactionalResult
+)
+from task_manager.core.utils import UUIDEncoder
+from task_manager.storage.in_memory import Task
+
+
+@dataclass
+class AsyncPGTask(Task):
+    @staticmethod
+    def from_dict(data: dict):
+        if isinstance(data.get('payload'), str):
+            data['payload'] = json.loads(data['payload'])
+        return AsyncPGTask(**json.loads(json.dumps(data, cls=UUIDEncoder)))
+
+
+class AsyncPGConsumedTaskResult(TransactionalResult[ConsumedTask]):
+    def __init__(
+            self,
+            task: AsyncPGTask,
+            lock: Transaction
+    ):
+        self.task = task
+        self.lock = lock
+
+    async def get_data(self) -> ConsumedTask:
+        # TODO pg impl
+        return ConsumedTask(self.task.idn, self.task.topic, self.task.payload)
+        # ...
+
+    async def commit(self):
+        await self.lock.commit()
+
+    async def rollback(self):
+        await self.lock.rollback()
 
 
 class AsyncPGStorage(StorageInterface):
@@ -23,7 +59,10 @@ class AsyncPGStorage(StorageInterface):
             "host": os.environ.get("POSTGRES_HOST", "127.0.0.1"),
             "port": os.environ.get("POSTGRES_PORT", "5432"),
         }
-        self.lock = asyncio.Lock()
+        asyncio.get_event_loop().run_until_complete(
+            self.create_connection()
+        )
+
         self.tasks = []  # todo postgres impl
 
         # todo postgres impl
@@ -37,13 +76,21 @@ class AsyncPGStorage(StorageInterface):
                 max_size=10
             )
         if not self.subscribe_conn or self.subscribe_conn.is_closed():
-            self.subscribe_conn = await asyncpg.connect(
-                **self.connection_data
-            )
+            self.subscribe_conn = self.pool.acquire()
 
     async def close_connection(self):
+        if self.subscribe_conn:
+            await self.pool.release(self.subscribe_conn)
+            await self.subscribe_conn.close()
+
         await self.pool.close() if self.pool else None
-        await self.subscribe_conn.close() if self.subscribe_conn else None
+
+    async def __create_transaction(self) -> Tuple[Transaction, Connection]:
+        conn: Connection = await self.pool.acquire()
+        transaction: Transaction = conn.transaction()
+        await transaction.start()
+
+        return transaction, conn
 
     async def create_task(self, queue, payload) -> str:
         """
@@ -58,13 +105,13 @@ class AsyncPGStorage(StorageInterface):
         q = "INSERT INTO tasks (" \
             "idn, topic, payload, status" \
             ") VALUES (" \
-            f"'{idn}', '{queue}', '{json.dumps(payload)}', {NEW}" \
+            f"'{idn}', '{queue}', '{json.dumps(payload)}', {TaskStatus.NEW}" \
             ")"
 
-        async with self.pool.acquire() as connection:
-            connection: Connection
-            async with connection.transaction():
-                await connection.fetch(q)
+        transaction, conn = await self.__create_transaction()
+        await conn.fetch(q)
+        await transaction.commit()
+        await self.pool.release(conn)
 
         # FIXME what is this ?
         # self.tasks.append(task)
@@ -85,31 +132,29 @@ class AsyncPGStorage(StorageInterface):
         description VARCHAR (255) NULL
         """
 
-        await self.lock.acquire()
+        transaction, conn = await self.__create_transaction()
+        q = "SELECT * FROM tasks " \
+            f"WHERE (idn='{idn}' and status={TaskStatus.NEW}) " \
+            "FOR UPDATE;"
+        await conn.fetchrow(q)
 
         q = ("UPDATE tasks "
-             f"SET status = {IN_PROGRESS} "
-             f"WHERE (idn='{idn}' and status={NEW}) RETURNING * ;")
-
-        async with self.pool.acquire() as connection:
-            connection: Connection
-
-            async with connection.transaction():
-                rec: asyncpg.Record = await connection.fetchrow(q)
+             f"SET status = {TaskStatus.IN_PROGRESS} "
+             f"WHERE (idn='{idn}' and status={TaskStatus.NEW}) RETURNING * ;")
+        rec: asyncpg.Record = await conn.fetchrow(q)
 
         if rec:
-            task = Task.from_dict(dict(rec))
-            return ConsumedTaskResult(
+            task = AsyncPGTask.from_dict(dict(rec))
+            return AsyncPGConsumedTaskResult(
                 task,
-                self.lock
+                transaction
             )
+        await transaction.rollback()
+        await self.pool.release(conn)
 
-        # TODO is this legal? (release only without rec flow)
-        self.lock.release()
         return None
 
     async def take_first_pending(self, topics: list[str]) -> TransactionalResult[ConsumedTask] | None:
-        await self.lock.acquire()
         """
         idn UUID PRIMARY KEY,
         topic VARCHAR (50) NOT NULL,
@@ -119,49 +164,59 @@ class AsyncPGStorage(StorageInterface):
         description VARCHAR (255) NULL
         """
 
+        transaction, conn = await self.__create_transaction()
+        q = "SELECT * FROM tasks " \
+            f"WHERE (" \
+            f"status = {TaskStatus.NEW} and " \
+            f"topic in ({str([f'{i}' for i in topics])[1:-1]})) " \
+            "FOR UPDATE;"
+        await conn.fetchrow(q)
+
         q = (
             "UPDATE tasks "
-            f"SET status = {IN_PROGRESS} "
+            f"SET status = {TaskStatus.IN_PROGRESS} "
             f"WHERE ("
-            f"status = {NEW} and "
+            f"status = {TaskStatus.NEW} and "
             f"topic in ({str([f'{i}' for i in topics])[1:-1]})) "
             f"RETURNING * ;"
         )
 
-        async with self.pool.acquire() as connection:
-            connection: Connection
-
-            async with connection.transaction():
-                rec: asyncpg.Record = await connection.fetchrow(q)
+        rec: asyncpg.Record = await conn.fetchrow(q)
 
         if rec:
-            task = Task.from_dict(dict(rec))
-            return ConsumedTaskResult(
+            task = AsyncPGTask.from_dict(dict(rec))
+            return AsyncPGConsumedTaskResult(
                 task,
-                self.lock
+                transaction
             )
 
-        # TODO is this legal? (release only without rec flow)
-        self.lock.release()
+        await transaction.rollback()
+        await self.pool.release(conn)
+
         return None
 
     async def finish_task(self, idn: str, error: None | str = None, message: str = ''):
 
+        transaction, conn = await self.__create_transaction()
+        q = "SELECT * FROM tasks " \
+            f"WHERE idn = '{idn}'" \
+            "FOR UPDATE;"
+        await conn.fetchrow(q)
+
         q = (
             "UPDATE tasks "
-            f"SET status = {FINISHED}, "
+            f"SET status = {TaskStatus.FINISHED}, "
             f"error = {error}, "
             f"description = {message} "
             f"WHERE idn = '{idn}'"
             f"RETURNING *;"
         )
-        async with self.pool.acquire() as connection:
-            connection: Connection
 
-            async with connection.transaction():
-                rec: asyncpg.Record = await connection.fetchrow(q)
+        rec: asyncpg.Record = await conn.fetchrow(q)
 
         if not rec:
+            await transaction.rollback()
+            await self.pool.release(conn)
             # todo: add exceptions inheritance level to interface and raise appropriate one
             raise Exception(f"Can't finish task. Task '{idn}' not found in storage")
 
