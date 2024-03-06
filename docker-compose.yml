@@ -1,0 +1,41 @@
+version: '3'
+
+
+services:
+  app:
+#    restart: always
+    volumes:
+      - .:/usr/src/app/
+    env_file: .env
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+    links:
+      - postgres
+    entrypoint: sh entrypoint.sh
+    command: pipenv run python3 synthetic_test.py
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: "postgres"
+    volumes:
+      - .:/usr/src/app/
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+    working_dir: /usr/src/app/
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U task_manager" ]
+      interval: 1s
+      timeout: 10s
+      retries: 0
+
+volumes:
+  .: {}
+  postgres_data: {}

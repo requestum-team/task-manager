@@ -8,6 +8,9 @@ from task_manager.storage import InMemoryStorage, AsyncPGStorage
 storage = AsyncPGStorage()
 engine = TaskManager(storage)
 
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 
 def make_consumer(name, max_messages):
     async def consumer():
@@ -23,6 +26,8 @@ def make_consumer(name, max_messages):
 
 
 async def main():
+    await storage.create_connection()
+
     asyncio.create_task(make_consumer("1 message", 1))
     asyncio.create_task(make_consumer("permanent", 100))
 
@@ -79,4 +84,4 @@ async def main():
     await asyncio.sleep(2)
 
 
-asyncio.run(main())
+loop.run_until_complete(main())
