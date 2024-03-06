@@ -5,7 +5,7 @@ import uuid
 from typing import Optional
 
 import asyncpg
-from asyncpg import Connection
+from asyncpg import Connection, Pool
 from asyncpg.transaction import Transaction
 
 from task_manager.core.storage import StorageInterface, OnTaskCallback, TransactionalResult, ConsumedTask, NEW, \
@@ -14,7 +14,7 @@ from task_manager.core.storage import StorageInterface, OnTaskCallback, Transact
 
 class AsyncPGStorage(StorageInterface):
     def __init__(self):
-        self.conn: Optional[Connection] = None
+        self.pool: Optional[Pool] = None
         self.lock = asyncio.Lock()
         self.tasks = []  # todo postgres impl
 
@@ -23,17 +23,18 @@ class AsyncPGStorage(StorageInterface):
         self.on_task_callbacks = []
 
     async def create_connection(self):
-        if not self.conn or self.conn.is_closed():
-            self.conn = await asyncpg.connect(
+        if not self.pool or self.pool._closed:
+            self.pool = await asyncpg.create_pool(
                 user=os.environ.get("POSTGRES_USER", "postgres"),
                 password=os.environ.get("POSTGRES_PASS", "task_manager_password"),
                 database=os.environ.get("POSTGRES_NAME", "task_manager"),
                 host=os.environ.get("POSTGRES_HOST", "127.0.0.1"),
-                port=os.environ.get("POSTGRES_PORT", "5432")
+                port=os.environ.get("POSTGRES_PORT", "5432"),
+                max_size=10
             )
 
     async def close_connection(self):
-        await self.conn.close()
+        await self.pool.close()
 
     async def create_task(self, queue, payload) -> str:
         """
@@ -52,7 +53,9 @@ class AsyncPGStorage(StorageInterface):
             f"'{task.idn}', '{queue}', '{json.dumps(payload)}', {NEW}" \
             ")"
 
-        await self.conn.fetch(q)
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.fetch(q)
 
         self.tasks.append(task)
 
@@ -72,14 +75,15 @@ class AsyncPGStorage(StorageInterface):
         description VARCHAR (255) NULL
         """
 
-        # FIXME pg impl conflicts
-        # await self.lock.acquire()
+        await self.lock.acquire()
 
         q = ("UPDATE tasks "
              f"SET status = {IN_PROGRESS} "
              f"WHERE (idn='{idn}' and status={NEW}) RETURNING * ;")
 
-        res: list | asyncpg.Record = await self.conn.fetch(q)
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                res: list | asyncpg.Record = await connection.fetch(q)
 
         if res:
             res: asyncpg.Record = res[0]
@@ -89,13 +93,11 @@ class AsyncPGStorage(StorageInterface):
                 self.lock
             )
 
-        # FIXME pg impl conflicts
-        # self.lock.release()
+        self.lock.release()
         return None
 
     async def take_first_pending(self, topics: list[str]) -> TransactionalResult[ConsumedTask] | None:
-        # FIXME pg impl conflicts
-        # await self.lock.acquire()
+        await self.lock.acquire()
         """
         idn UUID PRIMARY KEY,
         topic VARCHAR (50) NOT NULL,
@@ -114,7 +116,9 @@ class AsyncPGStorage(StorageInterface):
             f"RETURNING * ;"
         )
 
-        res: list | asyncpg.Record = await self.conn.fetch(q)
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                res: list | asyncpg.Record = await connection.fetch(q)
 
         if res:
             res: asyncpg.Record = res[0]
@@ -124,8 +128,7 @@ class AsyncPGStorage(StorageInterface):
                 self.lock
             )
 
-        # FIXME pg impl conflicts
-        # self.lock.release()
+        self.lock.release()
         return None
 
     async def finish_task(self, idn: str, error: None | str = None, message: str = ''):
@@ -138,7 +141,9 @@ class AsyncPGStorage(StorageInterface):
             f"WHERE idn = '{idn}'"
             f"RETURNING *;"
         )
-        res: list | asyncpg.Record = await self.conn.fetch(q)
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                res: list | asyncpg.Record = await connection.fetch(q)
 
         if not res:
             # todo: add exceptions inheritance level to interface and raise appropriate one

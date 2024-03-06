@@ -74,12 +74,10 @@ class ConsumedTaskResult(TransactionalResult[ConsumedTask]):
         return ConsumedTask(self.task.idn, self.task.topic, self.task.payload)
 
     async def commit(self):
-        # FIXME pg impl conflicts
-        # self.lock.release()
+        self.lock.release()
         ...
 
     async def rollback(self):
         self.task.status = NEW
-        # FIXME pg impl conflicts
-        # self.lock.release()
+        self.lock.release()
         ...
