@@ -54,12 +54,11 @@ class AsyncPGStorage(StorageInterface):
         error VARCHAR (255) NULL,
         description VARCHAR (255) NULL
         """
-        task = Task(str(uuid.uuid4()), queue, payload, NEW, None)
-
+        idn = str(uuid.uuid4())
         q = "INSERT INTO tasks (" \
             "idn, topic, payload, status" \
             ") VALUES (" \
-            f"'{task.idn}', '{queue}', '{json.dumps(payload)}', {NEW}" \
+            f"'{idn}', '{queue}', '{json.dumps(payload)}', {NEW}" \
             ")"
 
         async with self.pool.acquire() as connection:
@@ -72,9 +71,9 @@ class AsyncPGStorage(StorageInterface):
 
         # todo postgres impl
         for callback in self.on_task_callbacks:
-            asyncio.create_task(callback(task.idn))
+            asyncio.create_task(callback(idn))
 
-        return task.idn
+        return idn
 
     async def take_pending(self, idn) -> TransactionalResult[ConsumedTask] | None:
         """
