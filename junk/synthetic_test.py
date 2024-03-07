@@ -44,6 +44,7 @@ def make_consumer(name, max_messages):
             task = await session.consume_task(['test'])
             print(f"consumer '{name}' got task '{task.idn}' with payload {task.payload} in '{task.topic}'")
             await asyncio.sleep(3)
+            await engine.finish_task(task.idn, None)
             print(f"consumer '{name}' finished task '{task.idn}' with payload {task.payload} in '{task.topic}'")
 
     return consumer()

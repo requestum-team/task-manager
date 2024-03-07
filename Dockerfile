@@ -29,6 +29,6 @@ RUN pip install --upgrade pip
 RUN pip install pipenv
 RUN pipenv install
 
-RUN chmod +x /usr/src/app/entrypoint.sh
+#RUN chmod +x /usr/src/app/entrypoint.sh
 
 EXPOSE $APP_PORT

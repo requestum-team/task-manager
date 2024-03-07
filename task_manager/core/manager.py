@@ -22,7 +22,7 @@ class TaskManager:
     async def create_task(self, queue, payload):
         return await self.storage.create_task(queue, payload)
 
-    async def finish_task(self, idn: str, error: None|str, message: str = ''):
+    async def finish_task(self, idn: str, error: None | str, message: str = ''):
         await self.storage.finish_task(idn, error, message)
 
     async def take_pending_task(self, topics: list[str]):
