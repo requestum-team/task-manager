@@ -16,7 +16,6 @@ services:
         condition: service_healthy
     links:
       - postgres
-#    entrypoint: sh entrypoint.sh
     command: pipenv run python3 junk/synthetic_test.py asyncpg_storage
 
   postgres:

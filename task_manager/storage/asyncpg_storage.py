@@ -3,50 +3,39 @@ import json
 import os
 from pathlib import Path
 import uuid
-from dataclasses import dataclass
 from typing import Optional, Tuple, List
 
 import asyncpg
 from asyncpg import Connection, Pool
 from asyncpg.transaction import Transaction
 
-from task_manager.core.tasks import ConsumedTask, TaskStatus
+from task_manager.core.tasks import ConsumedTask
 from task_manager.core.storage import (
     StorageInterface, OnTaskCallback, TransactionalResult
 )
-from task_manager.core.utils import UUIDEncoder
-from task_manager.storage.in_memory import Task
+from task_manager.storage.tasks import Task, TaskStatus, create_task_from_dict
 from task_manager.storage.utils import generator
-
-
-@dataclass
-class AsyncPGTask(Task):
-    @staticmethod
-    def from_dict(data: dict):
-        if isinstance(data.get('payload'), str):
-            data['payload'] = json.loads(data['payload'])
-        return AsyncPGTask(**json.loads(json.dumps(data, cls=UUIDEncoder)))
 
 
 class AsyncPGConsumedTaskResult(TransactionalResult[ConsumedTask]):
     def __init__(
             self,
-            task: AsyncPGTask,
-            lock: Transaction
+            task: Task,
+            transaction: Transaction
     ):
         self.task = task
-        self.lock = lock
+        self.transaction = transaction
 
-    async def get_data(self) -> AsyncPGTask:
+    async def get_data(self) -> Task:
         # TODO another returning dataclass impl ?
-        # TODO I think current AsyncPGTask impl not bed
+        # TODO I think current Task impl not bed
         return self.task
 
     async def commit(self):
-        await self.lock.commit()
+        await self.transaction.commit()
 
     async def rollback(self):
-        await self.lock.rollback()
+        await self.transaction.rollback()
 
 
 class AsyncPGStorage(StorageInterface):
@@ -72,7 +61,6 @@ class AsyncPGStorage(StorageInterface):
             self.create_subscriber()
         )
 
-        self.tasks = []  # FIXME what is this ?
         self.on_task_callbacks: List[OnTaskCallback] = []
 
     async def __create_schema(self):
@@ -81,7 +69,7 @@ class AsyncPGStorage(StorageInterface):
         ).resolve().parents[1])
 
         sql_migrations_fir_path = os.path.join(
-            project_dir, 'sqlmigrations'
+            project_dir, 'task_manager', 'storage', 'resources', 'sql_migrations'
         )
         files = []
 
@@ -185,9 +173,6 @@ class AsyncPGStorage(StorageInterface):
                 notify_q = f"NOTIFY {self.subscription_channel}, '{idn}';"
                 await connection.execute(notify_q)
 
-        # FIXME what is this ?
-        # self.tasks.append(task)
-
         return idn
 
     async def take_pending(self, idn) -> TransactionalResult[ConsumedTask] | None:
@@ -218,7 +203,7 @@ class AsyncPGStorage(StorageInterface):
         rec: asyncpg.Record = await conn.fetchrow(q)
 
         if rec:
-            task = AsyncPGTask.from_dict(dict(rec))
+            task = create_task_from_dict(dict(rec))
             return AsyncPGConsumedTaskResult(
                 task,
                 transaction
@@ -258,7 +243,7 @@ class AsyncPGStorage(StorageInterface):
         rec: asyncpg.Record = await conn.fetchrow(q)
 
         if rec:
-            task = AsyncPGTask.from_dict(dict(rec))
+            task = create_task_from_dict(dict(rec))
             return AsyncPGConsumedTaskResult(
                 task,
                 transaction

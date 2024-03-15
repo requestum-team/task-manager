@@ -5,7 +5,7 @@ from task_manager.core.storage import (
     StorageInterface, TransactionalResult,
     ConsumedTask, OnTaskCallback
 )
-from task_manager.core.tasks import Task, TaskStatus
+from task_manager.storage.tasks import Task, TaskStatus
 
 
 class ConsumedTaskResult(TransactionalResult[ConsumedTask]):

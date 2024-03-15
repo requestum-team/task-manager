@@ -32,15 +32,3 @@ class StorageInterface:
 
     def add_on_task_callback(self, callback: OnTaskCallback):
         raise NotImplemented()
-
-
-class StorageType:
-    IN_MEMORY_STORAGE = 'in_memory_storage'
-    ASYNCPG_STORAGE = 'asyncpg_storage'
-
-    @staticmethod
-    def choices():
-        return [
-            StorageType.IN_MEMORY_STORAGE,
-            StorageType.ASYNCPG_STORAGE
-        ]

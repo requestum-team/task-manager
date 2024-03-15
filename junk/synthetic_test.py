@@ -10,7 +10,20 @@ sys.path.append(str(Path(parent_dir).resolve().parents[0]))
 
 from task_manager.core import TaskManager
 from task_manager.core import SessionClosedException
-from task_manager.core.storage import StorageType, StorageInterface
+from task_manager.core.storage import StorageInterface
+
+
+class StorageType:
+    IN_MEMORY_STORAGE = 'in_memory_storage'
+    ASYNCPG_STORAGE = 'asyncpg_storage'
+
+    @staticmethod
+    def choices():
+        return [
+            StorageType.IN_MEMORY_STORAGE,
+            StorageType.ASYNCPG_STORAGE
+        ]
+
 
 parser = argparse.ArgumentParser()
 
