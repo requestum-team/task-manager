@@ -1,22 +1,11 @@
 import asyncio
 import uuid
-from dataclasses import dataclass
-from task_manager.core.storage import StorageInterface, ConsumedTask, OnTaskCallback, TransactionalResult
 
-
-NEW = 0
-IN_PROGRESS = 1
-FINISHED = 2
-
-
-@dataclass
-class Task:
-    idn: str
-    topic: str
-    payload: dict
-    status: int
-    error: None|str
-    description: str = ''
+from task_manager.core.storage import (
+    StorageInterface, TransactionalResult,
+    ConsumedTask, OnTaskCallback
+)
+from task_manager.storage.tasks import Task, TaskStatus
 
 
 class ConsumedTaskResult(TransactionalResult[ConsumedTask]):
@@ -31,7 +20,7 @@ class ConsumedTaskResult(TransactionalResult[ConsumedTask]):
         self.lock.release()
 
     async def rollback(self):
-        self.task.status = NEW
+        self.task.status = TaskStatus.NEW
         self.lock.release()
 
 
@@ -43,7 +32,7 @@ class InMemoryStorage(StorageInterface):
         self.on_task_callbacks = []
 
     async def create_task(self, queue, payload) -> str:
-        task = Task(str(uuid.uuid4()), queue, payload, NEW, None)
+        task = Task(str(uuid.uuid4()), queue, payload, TaskStatus.NEW, None)
         self.tasks.append(task)
 
         for callback in self.on_task_callbacks:
@@ -55,8 +44,8 @@ class InMemoryStorage(StorageInterface):
         await self.lock.acquire()
 
         for task in self.tasks:
-            if task.idn == idn and task.status == NEW:
-                task.status = IN_PROGRESS
+            if task.idn == idn and task.status == TaskStatus.NEW:
+                task.status = TaskStatus.IN_PROGRESS
                 return ConsumedTaskResult(
                     task,
                     self.lock
@@ -67,10 +56,10 @@ class InMemoryStorage(StorageInterface):
 
     async def take_first_pending(self, topics: list[str]) -> TransactionalResult[ConsumedTask] | None:
         await self.lock.acquire()
-        
+
         for task in self.tasks:
-            if task.topic in topics and task.status == NEW:
-                task.status = IN_PROGRESS
+            if task.topic in topics and task.status == TaskStatus.NEW:
+                task.status = TaskStatus.IN_PROGRESS
                 return ConsumedTaskResult(
                     task,
                     self.lock
@@ -79,10 +68,10 @@ class InMemoryStorage(StorageInterface):
         self.lock.release()
         return None
 
-    async def finish_task(self, idn: str, error: None|str = None, message: str = ''):
+    async def finish_task(self, idn: str, error: None | str = None, message: str = ''):
         for task in self.tasks:
             if task.idn == idn:
-                task.status = FINISHED
+                task.status = TaskStatus.FINISHED
                 task.error = error
                 task.message = message
                 return

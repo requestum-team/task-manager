@@ -1,13 +1,6 @@
-from dataclasses import dataclass
 from typing import Callable, Awaitable, Any, TypeVar, Generic
 
-
-@dataclass
-class ConsumedTask:
-    idn: str
-    topic: str
-    payload: dict
-
+from task_manager.core.tasks import ConsumedTask
 
 OnTaskCallback = Callable[[str], Awaitable[Any]]
 T = TypeVar('T')
@@ -28,7 +21,7 @@ class StorageInterface:
     async def create_task(self, queue, payload) -> str:
         raise NotImplemented()
 
-    async def finish_task(self, idn: str, error: None|str = None, message: str = ''):
+    async def finish_task(self, idn: str, error: None | str = None, message: str = ''):
         raise NotImplemented()
 
     async def take_pending(self, idn) -> TransactionalResult[ConsumedTask] | None:

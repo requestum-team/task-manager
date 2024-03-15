@@ -1,0 +1,15 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pydantic = "2.6"
+aiohttp = "3.9"
+asyncpg = "0.29"
+
+[dev-packages]
+
+[requires]
+python_version = "3.11"
+python_full_version = "3.11"
